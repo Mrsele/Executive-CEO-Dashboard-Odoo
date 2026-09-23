@@ -275,6 +275,11 @@
                             <a href="#" class="cd_action_link" t-on-click.prevent="openOverdueInvoices">All Invoices →</a>
                         </div>
                         <div class="cd_debt_list mt-2">
+                            <t t-if="!state.data.summary.top_overdue.length">
+                                <div class="text-muted text-center py-4">
+                                    <i class="fa fa-check-circle text-success me-1"/> No overdue customer debt! All accounts are current.
+                                </div>
+                            </t>
                             <t t-foreach="state.data.summary.top_overdue" t-as="c" t-key="c.name">
                                 <div class="cd_debt_item">
                                     <div class="cd_debt_info">
@@ -394,6 +399,11 @@
                             </div>
                         </div>
                         <div class="cd_bank_list mt-3">
+                            <t t-if="!state.data.finance.bank_accounts.length">
+                                <div class="text-muted text-center py-3">
+                                    <i class="fa fa-info-circle me-1"/> No bank or cash journals found.
+                                </div>
+                            </t>
                             <t t-foreach="state.data.finance.bank_accounts" t-as="b" t-key="b.name">
                                 <div class="cd_bank_item">
                                     <div class="cd_bank_name"><i class="fa fa-credit-card text-muted me-2"/> <t t-esc="b.name"/></div>
@@ -423,7 +433,8 @@
                         </div>
                         <div class="cd_panel_footer_link mt-4 pt-2 border-top">
                             <span>Net Receivable Surplus:</span>
-                            <strong class="text-success" t-esc="'+' + fmtMoney(state.data.finance.net_receivable_surplus)"/>
+                            <strong t-att-class="state.data.finance.net_receivable_surplus &gt;= 0 ? 'text-success' : 'text-danger'"
+                                    t-esc="(state.data.finance.net_receivable_surplus &gt; 0 ? '+' : '') + fmtMoney(state.data.finance.net_receivable_surplus)"/>
                         </div>
                     </div>
 
@@ -484,6 +495,13 @@
                                 </tr>
                             </thead>
                             <tbody>
+                                <t t-if="!state.data.finance.overdue_customers.length">
+                                    <tr>
+                                        <td colspan="6" class="text-muted text-center py-4">
+                                            <i class="fa fa-check-circle text-success me-1"/> All customer invoices are current or paid. No overdue balances!
+                                        </td>
+                                    </tr>
+                                </t>
                                 <t t-foreach="state.data.finance.overdue_customers" t-as="cust" t-key="cust.id">
                                     <tr>
                                         <td>
@@ -627,6 +645,11 @@
                             <span class="cd_badge cd_badge_grey">MTD Ranking</span>
                         </div>
                         <div class="cd_cust_rev_list mt-2">
+                            <t t-if="!state.data.sales.top_customers.length">
+                                <div class="text-muted text-center py-4">
+                                    No confirmed customer sales yet.
+                                </div>
+                            </t>
                             <t t-foreach="state.data.sales.top_customers" t-as="tc" t-key="tc.name">
                                 <div class="cd_cust_rev_item">
                                     <div class="d-flex justify-content-between align-items-center">
@@ -659,6 +682,11 @@
                             <span class="cd_badge cd_badge_teal" t-esc="fmtMoney(state.data.sales.weighted_closing_sum) + ' Weighted'"/>
                         </div>
                         <div class="cd_opps_list mt-2">
+                            <t t-if="!state.data.sales.closing_opportunities.length">
+                                <div class="text-muted text-center py-4">
+                                    No open opportunities closing this period.
+                                </div>
+                            </t>
                             <t t-foreach="state.data.sales.closing_opportunities" t-as="opp" t-key="opp.title">
                                 <div class="cd_opp_item">
                                     <div class="d-flex justify-content-between align-items-start">
@@ -759,11 +787,12 @@
                         <div>
                             <div class="d-flex align-items-center gap-2">
                                 <span class="cd_panel_title">Products Below Reorder Point</span>
-                                <span class="cd_badge cd_badge_danger">5 Critical Lines</span>
+                                <span class="cd_badge cd_badge_danger" t-if="state.data.inventory.reorder_products.length" t-esc="state.data.inventory.reorder_products.length + ' Critical Lines'"/>
+                                <span class="cd_badge cd_badge_success" t-if="!state.data.inventory.reorder_products.length">Stock Levels Optimal</span>
                             </div>
                             <div class="cd_tiny text-muted">Automated reorder rule triggers ready for immediate RFQ submission to vendors</div>
                         </div>
-                        <button class="cd_btn_rfq_all" t-on-click="generateRFQForAll">
+                        <button class="cd_btn_rfq_all" t-if="state.data.inventory.reorder_products.length" t-on-click="generateRFQForAll">
                             <i class="fa fa-shopping-cart me-1"/> Generate RFQ for All
                         </button>
                     </div>
@@ -781,6 +810,13 @@
                                 </tr>
                             </thead>
                             <tbody>
+                                <t t-if="!state.data.inventory.reorder_products.length">
+                                    <tr>
+                                        <td colspan="7" class="text-muted text-center py-4">
+                                            <i class="fa fa-check-circle text-success me-1"/> All inventory levels are optimal. No products require reordering!
+                                        </td>
+                                    </tr>
+                                </t>
                                 <t t-foreach="state.data.inventory.reorder_products" t-as="item" t-key="item.sku">
                                     <tr>
                                         <td><code class="cd_sku_tag" t-esc="item.sku"/></td>
@@ -900,9 +936,14 @@
                                 <span class="cd_panel_title">Late Clock-Ins Today</span>
                                 <div class="cd_tiny text-muted">Attendance badge kiosk / RFID check-ins</div>
                             </div>
-                            <span class="cd_counter_pill">3 Late</span>
+                            <span class="cd_counter_pill" t-esc="state.data.hr.late_clockins.length + ' Late'"/>
                         </div>
                         <div class="cd_late_list mt-2">
+                            <t t-if="!state.data.hr.late_clockins.length">
+                                <div class="text-muted text-center py-3">
+                                    <i class="fa fa-check-circle text-success me-1"/> No late clock-ins recorded today.
+                                </div>
+                            </t>
                             <t t-foreach="state.data.hr.late_clockins" t-as="lc" t-key="lc.name">
                                 <div class="cd_late_item">
                                     <div>
@@ -922,9 +963,14 @@
                                 <span class="cd_panel_title">Staff Out of Office Today</span>
                                 <div class="cd_tiny text-muted">Current calendar absences</div>
                             </div>
-                            <span class="cd_badge cd_badge_grey">3 Absent</span>
+                            <span class="cd_badge cd_badge_grey" t-esc="state.data.hr.on_leave_today + ' Absent'"/>
                         </div>
                         <div class="cd_split_boxes mt-2">
+                            <t t-if="!state.data.hr.out_of_office.length">
+                                <div class="text-muted text-center py-3 w-100">
+                                    <i class="fa fa-check-circle text-success me-1"/> All team members are present.
+                                </div>
+                            </t>
                             <t t-foreach="state.data.hr.out_of_office" t-as="oo" t-key="oo.name">
                                 <div class="cd_sub_stat_box">
                                     <div class="cd_fw_600" t-esc="oo.name"/>
@@ -948,6 +994,11 @@
                         </button>
                     </div>
                     <div class="cd_jobs_grid mt-3">
+                        <t t-if="!state.data.hr.job_positions.length">
+                            <div class="text-muted text-center py-4 w-100">
+                                <i class="fa fa-info-circle me-1"/> No active job positions open for recruitment.
+                            </div>
+                        </t>
                         <t t-foreach="state.data.hr.job_positions" t-as="job" t-key="job.title">
                             <div class="cd_job_card">
                                 <div class="cd_job_title" t-esc="job.title"/>
@@ -1001,6 +1052,11 @@
                             <button class="cd_btn_pill_outline" t-on-click="openProjects">Open Projects</button>
                         </div>
                         <div class="cd_project_list mt-2">
+                            <t t-if="!state.data.project.projects.length">
+                                <div class="text-muted text-center py-4">
+                                    <i class="fa fa-info-circle me-1"/> No active projects found.
+                                </div>
+                            </t>
                             <t t-foreach="state.data.project.projects" t-as="p" t-key="p.name">
                                 <div class="cd_project_item">
                                     <div>
@@ -1022,6 +1078,11 @@
                             <button class="cd_btn_pill_outline" t-on-click="openTickets">Open Helpdesk</button>
                         </div>
                         <div class="cd_ticket_list mt-2">
+                            <t t-if="!state.data.project.tickets.length">
+                                <div class="text-muted text-center py-4">
+                                    <i class="fa fa-check-circle text-success me-1"/> No open support tickets.
+                                </div>
+                            </t>
                             <t t-foreach="state.data.project.tickets" t-as="tk" t-key="tk.id">
                                 <div class="cd_ticket_item">
                                     <div>

@@ -25,7 +25,7 @@ export class CeoDashboard extends Component {
             dateFrom: startOfMonth,
             dateTo: today,
             yoyComparison: true,
-            currency: "$ USD",
+            currency: "",
             notification: null,
             data: null,
         });
@@ -44,6 +44,9 @@ export class CeoDashboard extends Component {
                 this.state.dateTo,
             ]);
             this.state.data = data;
+            if (data && data.currency_name) {
+                this.state.currency = data.currency_symbol ? `${data.currency_symbol} ${data.currency_name}` : data.currency_name;
+            }
         } catch (e) {
             console.error("Dashboard data load error:", e);
         } finally {
@@ -265,22 +268,29 @@ export class CeoDashboard extends Component {
     // ------------------------------------------------------------------
     fmtMoney(amount) {
         if (amount === undefined || amount === null || isNaN(amount)) amount = 0;
-        const sym = (this.state.data && this.state.data.currency_symbol) || "$";
+        const sym = (this.state.data && this.state.data.currency_symbol) || "";
         const pos = (this.state.data && this.state.data.currency_position) || "before";
-        const n = Math.round(amount).toLocaleString("en-US");
-        return pos === "after" ? `${n} ${sym}` : `${sym}${n}`;
+        const sign = amount < 0 ? "-" : "";
+        const absVal = Math.abs(amount);
+        const n = absVal.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        return pos === "after" ? `${sign}${n} ${sym}` : `${sign}${sym}${n}`;
     }
 
     fmtCompact(amount) {
         if (amount === undefined || amount === null || isNaN(amount)) amount = 0;
-        const sym = (this.state.data && this.state.data.currency_symbol) || "$";
-        if (Math.abs(amount) >= 1000000) {
-            return `${sym}${(amount / 1000000).toFixed(2)}M`;
+        const sym = (this.state.data && this.state.data.currency_symbol) || "";
+        const pos = (this.state.data && this.state.data.currency_position) || "before";
+        const sign = amount < 0 ? "-" : "";
+        const absVal = Math.abs(amount);
+        let formatted = "";
+        if (absVal >= 1000000) {
+            formatted = `${(absVal / 1000000).toFixed(2)}M`;
+        } else if (absVal >= 1000) {
+            formatted = `${(absVal / 1000).toFixed(1)}K`;
+        } else {
+            formatted = `${absVal.toFixed(2)}`;
         }
-        if (Math.abs(amount) >= 1000) {
-            return `${sym}${(amount / 1000).toFixed(0)}K`;
-        }
-        return `${sym}${Math.round(amount)}`;
+        return pos === "after" ? `${sign}${formatted} ${sym}` : `${sign}${sym}${formatted}`;
     }
 
     fmtPct(v) {

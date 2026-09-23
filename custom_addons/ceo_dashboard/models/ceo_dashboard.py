@@ -12,8 +12,7 @@ _logger = logging.getLogger(__name__)
 class CeoDashboard(models.AbstractModel):
     """Executive CEO Dashboard Data Engine.
     Provides complete multi-tab business KPIs with dynamic module decoupling.
-    Gracefully calculates real data when available, and provides realistic executive
-    fallbacks when tables are empty or modules are not installed.
+    Calculates live business data from actual Odoo records.
     """
     _name = 'ceo.dashboard'
     _description = 'Executive CEO Dashboard Data Engine'
@@ -24,8 +23,8 @@ class CeoDashboard(models.AbstractModel):
     @api.model
     def get_dashboard_data(self, date_from=None, date_to=None):
         today = fields.Date.context_today(self)
-        date_from = fields.Date.from_string(date_from) if date_from else date_utils.start_of(today, 'month')
-        date_to = fields.Date.from_string(date_to) if date_to else today
+        date_from_dt = fields.Date.from_string(date_from) if date_from else date_utils.start_of(today, 'month')
+        date_to_dt = fields.Date.from_string(date_to) if date_to else today
 
         company = self.env.company
         currency = company.currency_id
@@ -45,21 +44,21 @@ class CeoDashboard(models.AbstractModel):
         }
 
         data = {
-            'company_name': company.name or 'Your Corporation',
+            'company_name': company.name or 'My Company',
             'currency_symbol': currency.symbol or '$',
             'currency_position': currency.position or 'before',
             'currency_name': currency.name or 'USD',
-            'date_from': fields.Date.to_string(date_from),
-            'date_to': fields.Date.to_string(date_to),
+            'date_from': fields.Date.to_string(date_from_dt),
+            'date_to': fields.Date.to_string(date_to_dt),
             'installed': installed,
         }
 
-        data['summary'] = self._get_summary_data(date_from, date_to, company, installed)
-        data['finance'] = self._get_finance_data(date_from, date_to, company, installed)
-        data['sales'] = self._get_sales_data(date_from, date_to, company, installed)
-        data['inventory'] = self._get_inventory_data(date_from, date_to, company, installed)
-        data['hr'] = self._get_hr_data(date_from, date_to, company, installed)
-        data['project'] = self._get_project_data(date_from, date_to, company, installed)
+        data['summary'] = self._get_summary_data(date_from_dt, date_to_dt, company, installed)
+        data['finance'] = self._get_finance_data(date_from_dt, date_to_dt, company, installed)
+        data['sales'] = self._get_sales_data(date_from_dt, date_to_dt, company, installed)
+        data['inventory'] = self._get_inventory_data(date_from_dt, date_to_dt, company, installed)
+        data['hr'] = self._get_hr_data(date_from_dt, date_to_dt, company, installed)
+        data['project'] = self._get_project_data(date_from_dt, date_to_dt, company, installed)
 
         return data
 
@@ -67,66 +66,148 @@ class CeoDashboard(models.AbstractModel):
     # 1. Executive Summary Tab Data
     # ---------------------------------------------------------------------
     def _get_summary_data(self, date_from, date_to, company, installed):
-        revenue = 1248000.0
-        revenue_ly = 1085000.0
-        expenses = 686400.0
-        net_profit = 460512.0
-        gross_margin = 45.0
-        net_margin = 36.9
-        cash = 2450820.0
-        ar_total = 618400.0
-        ap_total = 294150.0
-        overdue_amount = 142850.0
-        overdue_count = 14
-        dso = 36.8
-        monthly_target = company.ceo_dashboard_monthly_revenue_target or 1400000.0
-        orders_mtd_count = 382
-        orders_today_count = 18
-        win_rate = 68.4
+        today = fields.Date.context_today(self)
+        revenue = 0.0
+        expenses = 0.0
+        revenue_ly = 0.0
+        cash = 0.0
+        ar_total = 0.0
+        ap_total = 0.0
+        overdue_amount = 0.0
+        overdue_count = 0
+        dso = 0.0
+        monthly_target = company.ceo_dashboard_monthly_revenue_target or 0.0
+        orders_mtd_count = 0
+        orders_today_count = 0
+        win_rate = 0.0
+        top_overdue = []
 
-        # Real calculation if accounting exists
         if installed['account']:
             try:
-                real_rev, real_exp = self._calc_revenue_expense(date_from, date_to, company)
-                if real_rev > 0 or real_exp > 0:
-                    revenue = real_rev
-                    expenses = real_exp
-                    net_profit = revenue - expenses
-                    gross_margin = ((revenue - expenses * 0.4) / revenue * 100) if revenue else 0.0
-                    net_margin = (net_profit / revenue * 100) if revenue else 0.0
-
-                real_cash = self._calc_cash(date_to, company)
-                if real_cash > 0:
-                    cash = real_cash
-
-                real_ar, real_ap = self._calc_ar_ap(date_to, company)
-                if real_ar > 0 or real_ap > 0:
-                    ar_total, ap_total = real_ar, real_ap
+                revenue, expenses = self._calc_revenue_expense(date_from, date_to, company)
+                ly_from = date_from - relativedelta(years=1)
+                ly_to = date_to - relativedelta(years=1)
+                revenue_ly, _ = self._calc_revenue_expense(ly_from, ly_to, company)
+                cash = self._calc_cash(date_to, company)
+                ar_total, ap_total = self._calc_ar_ap(date_to, company)
 
                 overdue_recs = self._get_overdue_moves(company)
                 if overdue_recs:
                     overdue_count = len(overdue_recs)
                     overdue_amount = sum(overdue_recs.mapped('amount_residual'))
+                    days_in_period = max(1, (date_to - date_from).days + 1)
+                    if revenue > 0:
+                        dso = round((ar_total / revenue) * days_in_period, 1)
+
+                    grouped = {}
+                    for m in overdue_recs:
+                        if m.partner_id:
+                            grouped.setdefault(m.partner_id, []).append(m)
+                    for p, moves in sorted(grouped.items(), key=lambda item: sum(m.amount_residual for m in item[1]), reverse=True)[:5]:
+                        m_latest = moves[0]
+                        delay = (today - (m_latest.invoice_date_due or m_latest.invoice_date or today)).days
+                        top_overdue.append({
+                            'name': p.name or 'Unknown',
+                            'inv_ref': m_latest.name or 'INV/---',
+                            'contact': p.contact_address_inline or p.phone or p.email or 'Accounting Contact',
+                            'amount': sum(m.amount_residual for m in moves),
+                            'days_late': max(delay, 0),
+                        })
             except Exception as e:
                 _logger.warning("CEO Dashboard Summary: account calc error: %s", e)
 
-        # Real calculation if sale order exists
         if installed['sale']:
             try:
-                so_count = self.env['sale.order'].search_count([
+                Sale = self.env['sale.order']
+                month_start = today.replace(day=1)
+                orders_mtd_count = Sale.search_count([
                     ('company_id', '=', company.id), ('state', '=', 'sale'),
-                    ('date_order', '>=', f"{date_from} 00:00:00"), ('date_order', '<=', f"{date_to} 23:59:59")
+                    ('date_order', '>=', f"{month_start} 00:00:00")
                 ])
-                if so_count > 0:
-                    orders_mtd_count = so_count
+                orders_today_count = Sale.search_count([
+                    ('company_id', '=', company.id), ('state', '=', 'sale'),
+                    ('date_order', '>=', f"{today} 00:00:00")
+                ])
             except Exception as e:
                 _logger.warning("CEO Dashboard Summary: sale calc error: %s", e)
 
-        target_pct = min(round((revenue / monthly_target) * 100, 1), 100.0) if monthly_target else 89.1
-        rev_yoy_pct = round(((revenue - revenue_ly) / revenue_ly) * 100, 1) if revenue_ly else 15.8
+        if installed['crm']:
+            try:
+                Lead = self.env['crm.lead']
+                won = Lead.search_count([('company_id', 'in', (company.id, False)), ('stage_id.is_won', '=', True)])
+                lost = Lead.search_count([('company_id', 'in', (company.id, False)), ('active', '=', False), ('probability', '=', 0)])
+                total_opps = won + lost
+                win_rate = round((won / total_opps * 100), 1) if total_opps > 0 else 0.0
+            except Exception as e:
+                _logger.warning("CEO Dashboard Summary: crm calc error: %s", e)
+
+        # Inventory summary
+        inventory_value = 0.0
+        low_stock_count = 0
+        pending_deliveries = 0
+        pending_receipts = 0
+        turnover_rate = 0.0
+        if installed['stock']:
+            try:
+                StockQuant = self.env['stock.quant']
+                quants = StockQuant.search([('company_id', '=', company.id), ('location_id.usage', '=', 'internal')])
+                inventory_value = sum(q.quantity * q.product_id.standard_price for q in quants)
+
+                StockPicking = self.env['stock.picking']
+                pending_deliveries = StockPicking.search_count([
+                    ('company_id', '=', company.id), ('picking_type_code', '=', 'outgoing'),
+                    ('state', 'not in', ('done', 'cancel'))
+                ])
+                pending_receipts = StockPicking.search_count([
+                    ('company_id', '=', company.id), ('picking_type_code', '=', 'incoming'),
+                    ('state', 'not in', ('done', 'cancel'))
+                ])
+                if inventory_value > 0 and expenses > 0:
+                    turnover_rate = round(expenses / inventory_value, 1)
+            except Exception as e:
+                _logger.warning("CEO Dashboard Summary: stock calc error: %s", e)
+
+        # HR summary
+        pending_leaves_count = 0
+        if installed['hr_holidays']:
+            try:
+                pending_leaves_count = self.env['hr.leave'].search_count([
+                    ('state', '=', 'confirm'),
+                    ('employee_id.company_id', '=', company.id)
+                ])
+            except Exception as e:
+                _logger.warning("CEO Dashboard Summary: leave calc error: %s", e)
+
+        # Projects / Tickets summary
+        projects_over_budget_count = 0
+        open_tickets_count = 0
+        if installed['project']:
+            try:
+                projects_over_budget_count = self.env['project.task'].search_count([
+                    ('company_id', 'in', (company.id, False)),
+                    ('date_deadline', '<', f"{today} 00:00:00"),
+                    ('is_closed', '=', False),
+                ])
+            except Exception as e:
+                pass
+        if installed['helpdesk']:
+            try:
+                open_tickets_count = self.env['helpdesk.ticket'].search_count([
+                    ('company_id', 'in', (company.id, False)),
+                    ('stage_id.is_close', '=', False)
+                ])
+            except Exception as e:
+                pass
+
+        net_profit = revenue - expenses
+        gross_margin = round(((revenue - expenses * 0.4) / revenue * 100), 1) if revenue else 0.0
+        net_margin = round((net_profit / revenue * 100), 1) if revenue else 0.0
+        target_pct = min(round((revenue / monthly_target) * 100, 1), 100.0) if monthly_target > 0 else (100.0 if revenue > 0 else 0.0)
+        rev_yoy_pct = round(((revenue - revenue_ly) / revenue_ly) * 100, 1) if revenue_ly > 0 else 0.0
 
         return {
             'total_revenue': revenue,
+            'total_expenses': expenses,
             'rev_yoy_pct': rev_yoy_pct,
             'net_profit': net_profit,
             'gross_margin': gross_margin,
@@ -144,97 +225,106 @@ class CeoDashboard(models.AbstractModel):
             'ar_total': ar_total,
             'ap_total': ap_total,
             'net_working_capital_surplus': ar_total - ap_total,
-            'inventory_value': 1845200.0,
-            'low_stock_count': 8,
-            'pending_deliveries': 26,
-            'pending_receipts': 14,
-            'turnover_rate': 4.8,
-            'top_overdue': [
-                {'name': 'Vortex Global Logistics Inc.', 'inv_ref': 'INV/2026/00142', 'contact': 'David Chen (CFO)', 'amount': 46200.0, 'days_late': 48},
-                {'name': 'Apex Precision Engineering', 'inv_ref': 'INV/2026/00189', 'contact': 'Sarah Jenkins', 'amount': 32500.0, 'days_late': 35},
-                {'name': 'Nordic Retail Group ASA', 'inv_ref': 'INV/2026/00201', 'contact': 'Lars Lindqvist', 'amount': 27400.0, 'days_late': 22},
-                {'name': 'BioSynthetix Labs Corp', 'inv_ref': 'INV/2026/00215', 'contact': 'Dr. Elena Rostova', 'amount': 19850.0, 'days_late': 19},
-            ],
-            'pending_leaves_count': 3,
-            'projects_over_budget_count': 3,
-            'open_tickets_count': 3,
+            'inventory_value': inventory_value,
+            'low_stock_count': low_stock_count,
+            'pending_deliveries': pending_deliveries,
+            'pending_receipts': pending_receipts,
+            'turnover_rate': turnover_rate,
+            'top_overdue': top_overdue,
+            'pending_leaves_count': pending_leaves_count,
+            'projects_over_budget_count': projects_over_budget_count,
+            'open_tickets_count': open_tickets_count,
         }
 
     # ---------------------------------------------------------------------
     # 2. Finance & Invoicing Tab Data
     # ---------------------------------------------------------------------
     def _get_finance_data(self, date_from, date_to, company, installed):
-        revenue = 1248000.0
-        revenue_ly = 1085000.0
-        revenue_growth_pct = 15.0
-        expenses = 686400.0
-        expenses_ly = 620000.0
-        expenses_growth_pct = 10.7
-        gross_profit = 561600.0
-        gross_margin = 45.0
-        net_profit = 460512.0
-        net_margin = 36.9
-        retained_pct = 82
-        cash = 2450820.0
-        ar_total = 618400.0
-        ap_total = 294150.0
-        overdue_amount = 142850.0
-        overdue_count = 14
-        dso = 36.8
-
-        bank_accounts = [
-            {'name': 'Chase Corporate Operating', 'amount': 1480000.0},
-            {'name': 'SVB Commercial Treasury', 'amount': 820000.0},
-            {'name': 'Stripe / Merchant Clearing', 'amount': 150820.0},
-        ]
-
-        overdue_customers = [
-            {'id': 1, 'name': 'Vortex Global Logistics Inc.', 'code': 'cust-1', 'latest_invoice': 'INV/2026/00142', 'contact': 'David Chen (CFO)', 'email': 'd.chen@vortex-global.com', 'delay_days': 48, 'amount': 46200.0},
-            {'id': 2, 'name': 'Apex Precision Engineering', 'code': 'cust-2', 'latest_invoice': 'INV/2026/00189', 'contact': 'Sarah Jenkins', 'email': 's.jenkins@apexprecision.io', 'delay_days': 35, 'amount': 32500.0},
-            {'id': 3, 'name': 'Nordic Retail Group ASA', 'code': 'cust-3', 'latest_invoice': 'INV/2026/00201', 'contact': 'Lars Lindqvist', 'email': 'lars@nordicretail.se', 'delay_days': 22, 'amount': 27400.0},
-            {'id': 4, 'name': 'BioSynthetix Labs Corp', 'code': 'cust-4', 'latest_invoice': 'INV/2026/00215', 'contact': 'Dr. Elena Rostova', 'email': 'accounting@biosynthetix.com', 'delay_days': 19, 'amount': 19850.0},
-            {'id': 5, 'name': 'Helios Solar Systems', 'code': 'cust-5', 'latest_invoice': 'INV/2026/00234', 'contact': 'Marcus Webb', 'email': 'mwebb@helios-solar.energy', 'delay_days': 14, 'amount': 16900.0},
-        ]
+        today = fields.Date.context_today(self)
+        revenue = 0.0
+        revenue_ly = 0.0
+        expenses = 0.0
+        expenses_ly = 0.0
+        cash = 0.0
+        ar_total = 0.0
+        ap_total = 0.0
+        overdue_amount = 0.0
+        overdue_count = 0
+        dso = 0.0
+        bank_accounts = []
+        overdue_customers = []
 
         if installed['account']:
             try:
-                # Real bank accounts if present
+                revenue, expenses = self._calc_revenue_expense(date_from, date_to, company)
+                ly_from = date_from - relativedelta(years=1)
+                ly_to = date_to - relativedelta(years=1)
+                revenue_ly, expenses_ly = self._calc_revenue_expense(ly_from, ly_to, company)
+                cash = self._calc_cash(date_to, company)
+                ar_total, ap_total = self._calc_ar_ap(date_to, company)
+
+                # Real bank & cash accounts
                 journals = self.env['account.journal'].search([
                     ('company_id', '=', company.id), ('type', 'in', ('bank', 'cash'))
                 ])
-                if journals:
-                    real_banks = []
-                    for j in journals[:4]:
-                        balance = j.default_account_id.current_balance if hasattr(j.default_account_id, 'current_balance') else 0.0
-                        real_banks.append({'name': j.name, 'amount': float(balance or 0.0)})
-                    if any(b['amount'] > 0 for b in real_banks):
-                        bank_accounts = real_banks
+                for j in journals:
+                    b_amount = 0.0
+                    if j.default_account_id:
+                        lines = self.env['account.move.line'].search([
+                            ('account_id', '=', j.default_account_id.id),
+                            ('parent_state', '=', 'posted'),
+                            ('date', '<=', date_to)
+                        ])
+                        b_amount = sum(lines.mapped('balance'))
+                    if b_amount == 0.0 and 'account.payment' in self.env:
+                        payments = self.env['account.payment'].search([
+                            ('journal_id', '=', j.id),
+                            ('state', '=', 'paid'),
+                            ('date', '<=', date_to)
+                        ])
+                        b_amount = sum(p.amount if p.payment_type == 'inbound' else -p.amount for p in payments)
 
-                # Real overdue partners
-                real_overdue = self._get_overdue_moves(company)
-                if real_overdue:
+                    bank_accounts.append({
+                        'name': j.name,
+                        'amount': float(b_amount),
+                    })
+
+                # Overdue invoices & customers
+                overdue_recs = self._get_overdue_moves(company)
+                if overdue_recs:
+                    overdue_count = len(overdue_recs)
+                    overdue_amount = sum(overdue_recs.mapped('amount_residual'))
+                    days_in_period = max(1, (date_to - date_from).days + 1)
+                    if revenue > 0:
+                        dso = round((ar_total / revenue) * days_in_period, 1)
+
                     grouped = {}
-                    for m in real_overdue:
-                        p = m.partner_id
-                        if p:
-                            grouped.setdefault(p, []).append(m)
-                    if grouped:
-                        overdue_customers = []
-                        for p, moves in sorted(grouped.items(), key=lambda item: sum(m.amount_residual for m in item[1]), reverse=True)[:5]:
-                            m_latest = moves[0]
-                            delay = (fields.Date.context_today(self) - (m_latest.invoice_date_due or m_latest.invoice_date or fields.Date.context_today(self))).days
-                            overdue_customers.append({
-                                'id': p.id,
-                                'name': p.name or 'Unknown',
-                                'code': f'cust-{p.id}',
-                                'latest_invoice': m_latest.name or 'INV/---',
-                                'contact': p.contact_address_inline or p.phone or p.email or 'Accounting Contact',
-                                'email': p.email or 'invoices@partner.com',
-                                'delay_days': max(delay, 1),
-                                'amount': sum(m.amount_residual for m in moves),
-                            })
+                    for m in overdue_recs:
+                        if m.partner_id:
+                            grouped.setdefault(m.partner_id, []).append(m)
+                    for p, moves in sorted(grouped.items(), key=lambda item: sum(m.amount_residual for m in item[1]), reverse=True)[:5]:
+                        m_latest = moves[0]
+                        delay = (today - (m_latest.invoice_date_due or m_latest.invoice_date or today)).days
+                        overdue_customers.append({
+                            'id': p.id,
+                            'name': p.name or 'Unknown',
+                            'code': f'cust-{p.id}',
+                            'latest_invoice': m_latest.name or 'INV/---',
+                            'contact': p.contact_address_inline or p.phone or p.email or 'Accounting Contact',
+                            'email': p.email or 'invoices@partner.com',
+                            'delay_days': max(delay, 0),
+                            'amount': sum(m.amount_residual for m in moves),
+                        })
             except Exception as e:
-                _logger.warning("CEO Dashboard Finance: real query error: %s", e)
+                _logger.warning("CEO Dashboard Finance: error: %s", e)
+
+        gross_profit = revenue - (expenses * 0.4)
+        gross_margin = round((gross_profit / revenue * 100), 1) if revenue else 0.0
+        net_profit = revenue - expenses
+        net_margin = round((net_profit / revenue * 100), 1) if revenue else 0.0
+        revenue_growth_pct = round(((revenue - revenue_ly) / revenue_ly) * 100, 1) if revenue_ly > 0 else 0.0
+        expenses_growth_pct = round(((expenses - expenses_ly) / expenses_ly) * 100, 1) if expenses_ly > 0 else 0.0
+        retained_pct = round((net_profit / revenue * 100), 1) if revenue > 0 and net_profit > 0 else 0.0
 
         return {
             'total_revenue': revenue,
@@ -255,7 +345,7 @@ class CeoDashboard(models.AbstractModel):
             'net_receivable_surplus': ar_total - ap_total,
             'overdue_amount': overdue_amount,
             'overdue_count': overdue_count,
-            'overdue_ar_pct': round((overdue_amount / ar_total * 100), 1) if ar_total else 23.1,
+            'overdue_ar_pct': round((overdue_amount / ar_total * 100), 1) if ar_total > 0 else 0.0,
             'dso': dso,
             'overdue_customers': overdue_customers,
         }
@@ -264,49 +354,116 @@ class CeoDashboard(models.AbstractModel):
     # 3. Sales & CRM Tab Data
     # ---------------------------------------------------------------------
     def _get_sales_data(self, date_from, date_to, company, installed):
-        monthly_target = company.ceo_dashboard_monthly_revenue_target or 1400000.0
-        month_actual = 1248000.0
-        target_pct = 89.1
-        orders_today = 18
-        orders_week = 94
-        orders_month = 382
-        orders_ytd = 4210
-        pipeline_value = 3950000.0
-        win_rate = 68.4
-        avg_deal_size = 18600.0
-        new_leads = 42
+        today = fields.Date.context_today(self)
+        week_start = today - timedelta(days=today.weekday())
+        month_start = today.replace(day=1)
+        year_start = today.replace(month=1, day=1)
 
-        top_customers = [
-            {'name': 'OmniCorp Industrial Solutions', 'category': 'Heavy Manufacturing', 'deals': 8, 'amount': 285400.0, 'pct': 22.8},
-            {'name': 'Atlas Cloud Infrastructure', 'category': 'Telecommunications', 'deals': 5, 'amount': 218600.0, 'pct': 17.5},
-            {'name': 'Quantum BioPharmaceutics', 'category': 'Life Sciences', 'deals': 4, 'amount': 174200.0, 'pct': 13.9},
-            {'name': 'Vanguard Logistics Network', 'category': 'Supply Chain', 'deals': 6, 'amount': 142900.0, 'pct': 11.4},
-            {'name': 'Horizon Energy Systems', 'category': 'Clean Energy', 'deals': 3, 'amount': 115000.0, 'pct': 9.2},
-        ]
-
-        closing_opportunities = [
-            {'title': 'Enterprise ERP Modernization Phase II', 'customer': 'OmniCorp Industrial', 'rep': 'Marc Demo', 'amount': 120000.0, 'prob': 90, 'closing_date': '2026-09-28', 'stage': 'Negotiation'},
-            {'title': 'Annual SaaS Fleet Maintenance', 'customer': 'Atlas Cloud', 'rep': 'Joel Willis', 'amount': 85000.0, 'prob': 80, 'closing_date': '2026-09-29', 'stage': 'Proposition'},
-            {'title': 'Warehouse Automation Hardware Kit', 'customer': 'Nordic Retail Group', 'rep': 'Marc Demo', 'amount': 64000.0, 'prob': 75, 'closing_date': '2026-09-30', 'stage': 'Qualified'},
-            {'title': 'Quality Assurance Testing Chamber', 'customer': 'BioSynthetix Labs', 'rep': 'Mitchell Admin', 'amount': 48000.0, 'prob': 85, 'closing_date': '2026-09-27', 'stage': 'Negotiation'},
-        ]
+        monthly_target = company.ceo_dashboard_monthly_revenue_target or 0.0
+        month_actual = 0.0
+        orders_today = 0
+        orders_week = 0
+        orders_month = 0
+        orders_ytd = 0
+        pipeline_value = 0.0
+        win_rate = 0.0
+        avg_deal_size = 0.0
+        new_leads = 0
+        top_customers = []
+        closing_opportunities = []
 
         if installed['sale']:
             try:
-                today = fields.Date.context_today(self)
-                week_start = today - timedelta(days=today.weekday())
-                month_start = today.replace(day=1)
-
                 Sale = self.env['sale.order']
-                o_today = Sale.search_count([('company_id', '=', company.id), ('state', '=', 'sale'), ('date_order', '>=', f"{today} 00:00:00")])
-                o_week = Sale.search_count([('company_id', '=', company.id), ('state', '=', 'sale'), ('date_order', '>=', f"{week_start} 00:00:00")])
-                o_month = Sale.search_count([('company_id', '=', company.id), ('state', '=', 'sale'), ('date_order', '>=', f"{month_start} 00:00:00")])
-                if o_month > 0:
-                    orders_today = o_today
-                    orders_week = o_week
-                    orders_month = o_month
+                orders_today = Sale.search_count([
+                    ('company_id', '=', company.id), ('state', '=', 'sale'),
+                    ('date_order', '>=', f"{today} 00:00:00")
+                ])
+                orders_week = Sale.search_count([
+                    ('company_id', '=', company.id), ('state', '=', 'sale'),
+                    ('date_order', '>=', f"{week_start} 00:00:00")
+                ])
+                orders_month = Sale.search_count([
+                    ('company_id', '=', company.id), ('state', '=', 'sale'),
+                    ('date_order', '>=', f"{month_start} 00:00:00")
+                ])
+                orders_ytd = Sale.search_count([
+                    ('company_id', '=', company.id), ('state', '=', 'sale'),
+                    ('date_order', '>=', f"{year_start} 00:00:00")
+                ])
+
+                so_month = Sale.search([
+                    ('company_id', '=', company.id), ('state', '=', 'sale'),
+                    ('date_order', '>=', f"{month_start} 00:00:00")
+                ])
+                month_actual = sum(so_month.mapped('amount_total'))
+
+                # Real top customers by confirmed sales
+                so_all = Sale.search([('company_id', '=', company.id), ('state', '=', 'sale')])
+                if so_all:
+                    avg_deal_size = round(sum(so_all.mapped('amount_total')) / len(so_all), 2)
+                    partner_map = {}
+                    for so in so_all:
+                        p = so.partner_id
+                        if p:
+                            entry = partner_map.setdefault(p.id, {
+                                'name': p.name or 'Unknown',
+                                'category': p.category_id[0].name if p.category_id else 'Direct Customer',
+                                'deals': 0,
+                                'amount': 0.0,
+                            })
+                            entry['deals'] += 1
+                            entry['amount'] += so.amount_total
+                    tot_amt = sum(e['amount'] for e in partner_map.values()) or 1.0
+                    sorted_p = sorted(partner_map.values(), key=lambda x: x['amount'], reverse=True)[:5]
+                    for sp in sorted_p:
+                        sp['pct'] = round((sp['amount'] / tot_amt) * 100, 1)
+                    top_customers = sorted_p
             except Exception as e:
-                _logger.warning("CEO Dashboard Sales: real query error: %s", e)
+                _logger.warning("CEO Dashboard Sales: error: %s", e)
+
+        if installed['crm']:
+            try:
+                Lead = self.env['crm.lead']
+                won = Lead.search_count([('company_id', 'in', (company.id, False)), ('stage_id.is_won', '=', True)])
+                lost = Lead.search_count([('company_id', 'in', (company.id, False)), ('active', '=', False), ('probability', '=', 0)])
+                total_deals = won + lost
+                win_rate = round((won / total_deals * 100), 1) if total_deals > 0 else 0.0
+
+                new_leads = Lead.search_count([
+                    ('company_id', 'in', (company.id, False)),
+                    ('create_date', '>=', f"{week_start} 00:00:00")
+                ])
+
+                active_opps = Lead.search([
+                    ('company_id', 'in', (company.id, False)),
+                    ('type', '=', 'opportunity'),
+                    ('active', '=', True),
+                    ('stage_id.is_won', '=', False)
+                ])
+                pipeline_value = sum(active_opps.mapped('expected_revenue'))
+
+                # Closing opportunities
+                closing_leads = Lead.search([
+                    ('company_id', 'in', (company.id, False)),
+                    ('type', '=', 'opportunity'),
+                    ('active', '=', True),
+                    ('stage_id.is_won', '=', False)
+                ], order='expected_revenue desc', limit=5)
+                for l in closing_leads:
+                    closing_opportunities.append({
+                        'title': l.name or 'Opportunity',
+                        'customer': l.partner_id.name or l.contact_name or 'Prospective Customer',
+                        'rep': l.user_id.name or 'Unassigned',
+                        'amount': float(l.expected_revenue or 0.0),
+                        'prob': int(l.probability or 0),
+                        'closing_date': fields.Date.to_string(l.date_deadline) if l.date_deadline else 'Ongoing',
+                        'stage': l.stage_id.name or 'In Progress',
+                    })
+            except Exception as e:
+                _logger.warning("CEO Dashboard CRM: error: %s", e)
+
+        target_pct = min(round((month_actual / monthly_target) * 100, 1), 100.0) if monthly_target > 0 else (100.0 if month_actual > 0 else 0.0)
 
         return {
             'monthly_target': monthly_target,
@@ -329,42 +486,66 @@ class CeoDashboard(models.AbstractModel):
     # 4. Inventory & Operations Tab Data
     # ---------------------------------------------------------------------
     def _get_inventory_data(self, date_from, date_to, company, installed):
-        total_value = 1845200.0
-        low_stock_count = 8
-        pending_deliveries = 26
-        pending_receipts = 14
-        turnover_rate = 4.8
-        overdue_po = 5
-
-        reorder_products = [
-            {'sku': 'E-COM-094', 'name': 'High-Torque Stepper Motor 24V', 'vendor': 'Shenzhen Motion Tech', 'on_hand': 12, 'min_qty': 40, 'max_qty': 150, 'cost': 85.0},
-            {'sku': 'PR-ALUM-88', 'name': 'Anodized Aluminum Chassis 2U', 'vendor': 'Krupp Industrial GmbH', 'on_hand': 5, 'min_qty': 25, 'max_qty': 100, 'cost': 145.0},
-            {'sku': 'SEN-OPT-01', 'name': 'Optical Laser Sensor Array', 'vendor': 'Tokyo Photonics Ltd', 'on_hand': 8, 'min_qty': 30, 'max_qty': 80, 'cost': 210.0},
-            {'sku': 'PCB-MAIN-V4', 'name': 'Master Industrial Control Board v4', 'vendor': 'Delta Electronics Corp', 'on_hand': 4, 'min_qty': 20, 'max_qty': 60, 'cost': 320.0},
-            {'sku': 'PWR-MOD-500', 'name': 'Redundant Power Supply 500W', 'vendor': 'MeanWell Systems', 'on_hand': 9, 'min_qty': 35, 'max_qty': 120, 'cost': 115.0},
-        ]
+        total_value = 0.0
+        low_stock_count = 0
+        pending_deliveries = 0
+        pending_receipts = 0
+        turnover_rate = 0.0
+        overdue_po = 0
+        reorder_products = []
 
         if installed['stock']:
             try:
                 today = fields.Date.context_today(self)
+                StockQuant = self.env['stock.quant']
+                quants = StockQuant.search([('company_id', '=', company.id), ('location_id.usage', '=', 'internal')])
+                total_value = sum(q.quantity * q.product_id.standard_price for q in quants)
+
                 StockPicking = self.env['stock.picking']
-                deli = StockPicking.search_count([
+                pending_deliveries = StockPicking.search_count([
                     ('company_id', '=', company.id), ('picking_type_code', '=', 'outgoing'),
-                    ('state', 'not in', ('done', 'cancel')), ('scheduled_date', '>=', f"{today} 00:00:00"), ('scheduled_date', '<=', f"{today} 23:59:59")
+                    ('state', 'not in', ('done', 'cancel'))
                 ])
-                rec = StockPicking.search_count([
+                pending_receipts = StockPicking.search_count([
                     ('company_id', '=', company.id), ('picking_type_code', '=', 'incoming'),
-                    ('state', 'not in', ('done', 'cancel')), ('scheduled_date', '>=', f"{today} 00:00:00"), ('scheduled_date', '<=', f"{today} 23:59:59")
+                    ('state', 'not in', ('done', 'cancel'))
                 ])
-                if deli > 0 or rec > 0:
-                    pending_deliveries = deli
-                    pending_receipts = rec
+
+                # Reorder products
+                if 'stock.warehouse.orderpoint' in self.env:
+                    orderpoints = self.env['stock.warehouse.orderpoint'].search([
+                        ('company_id', '=', company.id)
+                    ], limit=5)
+                    for op in orderpoints:
+                        prod = op.product_id
+                        if prod.qty_available < op.product_min_qty:
+                            low_stock_count += 1
+                        reorder_products.append({
+                            'sku': prod.default_code or f'PROD-{prod.id}',
+                            'name': prod.name,
+                            'vendor': prod.seller_ids[0].partner_id.name if prod.seller_ids else 'Standard Supplier',
+                            'on_hand': prod.qty_available,
+                            'min_qty': op.product_min_qty,
+                            'max_qty': op.product_max_qty,
+                            'cost': prod.standard_price,
+                        })
             except Exception as e:
-                _logger.warning("CEO Dashboard Inventory: stock calc error: %s", e)
+                _logger.warning("CEO Dashboard Inventory: stock error: %s", e)
+
+        if installed['purchase']:
+            try:
+                today = fields.Date.context_today(self)
+                overdue_po = self.env['purchase.order'].search_count([
+                    ('company_id', '=', company.id),
+                    ('state', 'in', ('purchase', 'done')),
+                    ('date_planned', '<', f"{today} 00:00:00")
+                ])
+            except Exception as e:
+                _logger.warning("CEO Dashboard Inventory: purchase error: %s", e)
 
         return {
             'total_value': total_value,
-            'valuation_method': 'FIFO / Automated',
+            'valuation_method': 'Standard / Automated',
             'low_stock_count': low_stock_count,
             'pending_deliveries': pending_deliveries,
             'pending_receipts': pending_receipts,
@@ -377,51 +558,96 @@ class CeoDashboard(models.AbstractModel):
     # 5. HR & Attendance Tab Data
     # ---------------------------------------------------------------------
     def _get_hr_data(self, date_from, date_to, company, installed):
-        active_employees = 148
-        pending_leaves_count = 3
-        on_leave_today = 3
-        open_positions = 4
-        applicants_count = 98
-
-        pending_leaves = [
-            {'id': 101, 'initials': 'SC', 'employee_name': 'Sarah Connor', 'department': 'Operations', 'leave_type': 'Paid Time Off', 'dates': 'Sep 28 - Oct 02', 'days': 5},
-            {'id': 102, 'initials': 'AD', 'employee_name': 'Alexandre Dumas', 'department': 'Finance', 'leave_type': 'Medical Leave', 'dates': 'Sep 25 - Sep 26', 'days': 2},
-            {'id': 103, 'initials': 'ER', 'employee_name': 'Elena Rostova', 'department': 'Engineering', 'leave_type': 'Compensatory Leave', 'dates': 'Oct 01', 'days': 1},
-        ]
-
-        late_clockins = [
-            {'name': 'David Kim', 'department': 'Warehouse & Shipping', 'time': '08:42 AM', 'delay': '+42 min delay'},
-            {'name': 'Alicia Thorne', 'department': 'Technical Support', 'time': '09:18 AM', 'delay': '+18 min delay'},
-            {'name': 'Thomas Mueller', 'department': 'Machining Floor', 'time': '08:25 AM', 'delay': '+25 min delay'},
-        ]
-
-        out_of_office = [
-            {'name': 'Michael Vance', 'department': 'Sales', 'returns': 'Tomorrow'},
-            {'name': 'Chloe Martin', 'department': 'Supply Chain', 'returns': 'Friday'},
-            {'name': 'Rajesh Patel', 'department': 'Software R&D', 'returns': 'Sep 29'},
-        ]
-
-        job_positions = [
-            {'title': 'Senior Odoo Functional Consultant', 'department': 'Professional Services', 'applicants': 24, 'stage': 'Interview Stage'},
-            {'title': 'ERP Solutions Architect', 'department': 'Engineering', 'applicants': 16, 'stage': 'Technical Assessment'},
-            {'title': 'Senior Financial Controller', 'department': 'Finance & Accounting', 'applicants': 19, 'stage': 'Shortlisted'},
-            {'title': 'Lead Full-Stack OWL Developer', 'department': 'R&D', 'applicants': 31, 'stage': 'Final Round'},
-        ]
+        today = fields.Date.context_today(self)
+        active_employees = 0
+        pending_leaves_count = 0
+        on_leave_today = 0
+        open_positions = 0
+        applicants_count = 0
+        pending_leaves = []
+        late_clockins = []
+        out_of_office = []
+        job_positions = []
 
         if installed['hr']:
             try:
-                emp_count = self.env['hr.employee'].search_count([('company_id', '=', company.id), ('active', '=', True)])
-                if emp_count > 0:
-                    active_employees = emp_count
+                active_employees = self.env['hr.employee'].search_count([
+                    ('company_id', '=', company.id), ('active', '=', True)
+                ])
             except Exception as e:
-                _logger.warning("CEO Dashboard HR: employee count error: %s", e)
+                _logger.warning("CEO Dashboard HR: employee error: %s", e)
+
+        if installed['hr_holidays']:
+            try:
+                Leave = self.env['hr.leave']
+                pending_recs = Leave.search([
+                    ('state', '=', 'confirm'),
+                    ('employee_id.company_id', '=', company.id)
+                ], order='date_from asc', limit=5)
+                pending_leaves_count = len(pending_recs)
+                for l in pending_recs:
+                    emp = l.employee_id
+                    initials = "".join([part[0] for part in (emp.name or "EE").split()[:2]]).upper()
+                    dates_str = f"{l.date_from.strftime('%b %d') if l.date_from else ''} - {l.date_to.strftime('%b %d') if l.date_to else ''}"
+                    pending_leaves.append({
+                        'id': l.id,
+                        'initials': initials,
+                        'employee_name': emp.name or 'Employee',
+                        'department': emp.department_id.name or 'General',
+                        'leave_type': l.holiday_status_id.name if hasattr(l, 'holiday_status_id') and l.holiday_status_id else 'Time Off',
+                        'dates': dates_str,
+                        'days': l.number_of_days or 1,
+                    })
+
+                on_leave_today = Leave.search_count([
+                    ('state', '=', 'validate'),
+                    ('employee_id.company_id', '=', company.id),
+                    ('date_from', '<=', today),
+                    ('date_to', '>=', today)
+                ])
+
+                # Out of office
+                ooo_leaves = Leave.search([
+                    ('state', '=', 'validate'),
+                    ('employee_id.company_id', '=', company.id),
+                    ('date_from', '<=', today),
+                    ('date_to', '>=', today)
+                ], limit=5)
+                for o in ooo_leaves:
+                    ret_str = f"Returns {o.date_to.strftime('%b %d')}" if o.date_to else "On Leave"
+                    out_of_office.append({
+                        'name': o.employee_id.name or 'Employee',
+                        'department': o.employee_id.department_id.name or 'General',
+                        'returns': ret_str,
+                    })
+            except Exception as e:
+                _logger.warning("CEO Dashboard HR: holidays error: %s", e)
+
+        if installed['hr_recruitment']:
+            try:
+                Job = self.env['hr.job']
+                job_recs = Job.search([('company_id', '=', company.id), ('active', '=', True)], limit=5)
+                open_positions = len(job_recs)
+                for j in job_recs:
+                    app_count = getattr(j, 'application_count', 0) or j.no_of_recruitment or 0
+                    applicants_count += app_count
+                    job_positions.append({
+                        'title': j.name,
+                        'department': j.department_id.name or 'Operations',
+                        'applicants': app_count,
+                        'stage': 'Recruiting' if j.state == 'recruit' else 'Open',
+                    })
+            except Exception as e:
+                _logger.warning("CEO Dashboard HR: recruitment error: %s", e)
+
+        absence_rate = round((on_leave_today / active_employees * 100), 1) if active_employees > 0 else 0.0
 
         return {
             'active_employees': active_employees,
-            'headcount_status': '100% Onboarded',
+            'headcount_status': 'Active Organization',
             'pending_leaves_count': pending_leaves_count,
             'on_leave_today': on_leave_today,
-            'absence_rate': 2.0,
+            'absence_rate': absence_rate,
             'open_positions': open_positions,
             'applicants_count': applicants_count,
             'pending_leaves': pending_leaves,
@@ -434,45 +660,68 @@ class CeoDashboard(models.AbstractModel):
     # 6. Project & Helpdesk Tab Data
     # ---------------------------------------------------------------------
     def _get_project_data(self, date_from, date_to, company, installed):
-        overdue_tasks = 7
-        tasks_due_today = 12
-        projects_over_budget = 3
-        billable_hours = 1240.0
-        billable_target = company.ceo_dashboard_billable_hours_target or 1400.0
-        open_tickets = 3
-
-        projects = [
-            {'name': 'Enterprise Migration to Odoo 19', 'lead': 'Sarah Jenkins', 'spent_hours': 340, 'allocated_hours': 300, 'status': 'Over Budget', 'health': 'critical'},
-            {'name': 'Automated Warehouse RFID System', 'lead': 'David Kim', 'spent_hours': 180, 'allocated_hours': 160, 'status': 'Over Budget', 'health': 'warning'},
-            {'name': 'B2B Client Portal Integration', 'lead': 'Elena Rostova', 'spent_hours': 95, 'allocated_hours': 120, 'status': 'On Track', 'health': 'good'},
-        ]
-
-        tickets = [
-            {'id': 'TICK/2026/041', 'subject': 'Payment Gateway Webhook Timeout', 'partner': 'Nordic Retail Group', 'priority': 'Urgent', 'stage': 'In Progress'},
-            {'id': 'TICK/2026/043', 'subject': 'Stock Reorder Rule Misconfiguration', 'partner': 'Vortex Logistics', 'priority': 'High', 'stage': 'New'},
-            {'id': 'TICK/2026/045', 'subject': 'Customer Invoice PDF Discrepancy', 'partner': 'Apex Engineering', 'priority': 'Normal', 'stage': 'Waiting on Customer'},
-        ]
+        today = fields.Date.context_today(self)
+        overdue_tasks = 0
+        tasks_due_today = 0
+        projects_over_budget = 0
+        billable_hours = 0.0
+        billable_target = company.ceo_dashboard_billable_hours_target or 0.0
+        open_tickets = 0
+        projects = []
+        tickets = []
 
         if installed['project']:
             try:
-                today = fields.Date.context_today(self)
                 Task = self.env['project.task']
-                t_overdue = Task.search_count([
-                    ('company_id', '=', company.id),
+                overdue_tasks = Task.search_count([
+                    ('company_id', 'in', (company.id, False)),
                     ('date_deadline', '<', f"{today} 00:00:00"),
                     ('is_closed', '=', False),
                 ])
-                t_today = Task.search_count([
-                    ('company_id', '=', company.id),
+                tasks_due_today = Task.search_count([
+                    ('company_id', 'in', (company.id, False)),
                     ('date_deadline', '>=', f"{today} 00:00:00"),
                     ('date_deadline', '<=', f"{today} 23:59:59"),
                     ('is_closed', '=', False),
                 ])
-                if t_overdue > 0 or t_today > 0:
-                    overdue_tasks = t_overdue
-                    tasks_due_today = t_today
+
+                Project = self.env['project.project']
+                proj_recs = Project.search([
+                    ('company_id', 'in', (company.id, False)),
+                    ('active', '=', True)
+                ], limit=5)
+                for p in proj_recs:
+                    spent = getattr(p, 'allocated_hours', 0.0) or 0.0
+                    allocated = getattr(p, 'allocated_hours', 0.0) or 100.0
+                    projects.append({
+                        'name': p.name,
+                        'lead': p.user_id.name or 'Unassigned',
+                        'spent_hours': round(spent, 1),
+                        'allocated_hours': round(allocated, 1),
+                        'status': 'Active',
+                        'health': 'good',
+                    })
             except Exception as e:
-                _logger.warning("CEO Dashboard Project: calc error: %s", e)
+                _logger.warning("CEO Dashboard Project: error: %s", e)
+
+        if installed['helpdesk']:
+            try:
+                Ticket = self.env['helpdesk.ticket']
+                ticket_recs = Ticket.search([
+                    ('company_id', 'in', (company.id, False)),
+                    ('stage_id.is_close', '=', False)
+                ], limit=5)
+                open_tickets = len(ticket_recs)
+                for tk in ticket_recs:
+                    tickets.append({
+                        'id': tk.name or f'TICK/{tk.id}',
+                        'subject': tk.name or 'Support Ticket',
+                        'partner': tk.partner_id.name if tk.partner_id else 'Customer',
+                        'priority': 'Urgent' if getattr(tk, 'priority', '0') in ('2', '3') else 'Normal',
+                        'stage': tk.stage_id.name if tk.stage_id else 'Open',
+                    })
+            except Exception as e:
+                _logger.warning("CEO Dashboard Helpdesk: error: %s", e)
 
         return {
             'overdue_tasks': overdue_tasks,
@@ -528,13 +777,47 @@ class CeoDashboard(models.AbstractModel):
         rev_val = res_rev[0][0] if res_rev and res_rev[0] and res_rev[0][0] is not None else 0.0
         exp_val = res_exp[0][0] if res_exp and res_exp[0] and res_exp[0][0] is not None else 0.0
 
-        return float(-rev_val or 0.0), float(exp_val or 0.0)
+        rev = float(-rev_val or 0.0)
+        exp = float(exp_val or 0.0)
+
+        # Fallback to customer invoices and vendor bills if account move lines are not categorized by account_type
+        if rev == 0.0:
+            invs = self.env['account.move'].search([
+                ('company_id', '=', company.id),
+                ('move_type', 'in', ('out_invoice', 'out_refund')),
+                ('state', '=', 'posted'),
+                ('invoice_date', '>=', date_from),
+                ('invoice_date', '<=', date_to)
+            ])
+            rev = sum(m.amount_untaxed_signed if m.move_type == 'out_invoice' else -m.amount_untaxed_signed for m in invs)
+
+        if exp == 0.0:
+            bills = self.env['account.move'].search([
+                ('company_id', '=', company.id),
+                ('move_type', 'in', ('in_invoice', 'in_refund')),
+                ('state', '=', 'posted'),
+                ('invoice_date', '>=', date_from),
+                ('invoice_date', '<=', date_to)
+            ])
+            exp = sum(b.amount_untaxed_signed if b.move_type == 'in_invoice' else -b.amount_untaxed_signed for b in bills)
+
+        return float(rev or 0.0), float(exp or 0.0)
 
     def _calc_cash(self, date_to, company):
         domain = [('company_id', '=', company.id), ('parent_state', '=', 'posted'), ('date', '<=', date_to), ('account_id.account_type', '=', 'asset_cash')]
         res = self.env['account.move.line']._read_group(domain, [], ['balance:sum'])
         val = res[0][0] if res and res[0] and res[0][0] is not None else 0.0
-        return float(val or 0.0)
+        val = float(val or 0.0)
+        # If cash balance is 0 from account lines, check bank/cash journals payments
+        if val == 0.0 and 'account.payment' in self.env:
+            payments = self.env['account.payment'].search([
+                ('company_id', '=', company.id),
+                ('journal_id.type', 'in', ('bank', 'cash')),
+                ('state', '=', 'paid'),
+                ('date', '<=', date_to)
+            ])
+            val = float(sum(p.amount if p.payment_type == 'inbound' else -p.amount for p in payments))
+        return val
 
     def _calc_ar_ap(self, date_to, company):
         AccountMove = self.env['account.move']
