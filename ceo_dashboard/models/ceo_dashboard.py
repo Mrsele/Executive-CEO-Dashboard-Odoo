@@ -635,7 +635,7 @@ class CeoDashboard(models.AbstractModel):
                         'title': j.name,
                         'department': j.department_id.name or 'Operations',
                         'applicants': app_count,
-                        'stage': 'Recruiting' if j.state == 'recruit' else 'Open',
+                        'stage': 'Recruiting' if (getattr(j, 'state', '') == 'recruit' or getattr(j, 'no_of_recruitment', 0) > 0) else 'Open',
                     })
             except Exception as e:
                 _logger.warning("CEO Dashboard HR: recruitment error: %s", e)

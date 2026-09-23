@@ -65,7 +65,12 @@ This Month, This Year, Custom) applied across the whole dashboard.
             'ceo_dashboard/static/src/xml/dashboard.xml',
         ],
     },
-    'images': ['static/description/icon.png'],
+    'images': [
+        'static/description/banner.png',
+        'static/description/dashboard_main.png',
+        'static/description/finance_tab.png',
+        'static/description/sales_tab.png',
+    ],
     'application': True,
     'installable': True,
     'auto_install': False,
