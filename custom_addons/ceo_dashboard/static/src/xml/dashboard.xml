@@ -15,7 +15,7 @@
                 </button>
                 <button class="cd_tab_btn" t-att-class="{ 'cd_active': state.activeTab === 'finance' }"
                         t-on-click="() => this.switchTab('finance')">
-                    <i class="fa fa-money me-1"/> Finance &amp; Invoicing
+                    <i class="fa fa-money me-1"/> Finance &amp; Accounting
                 </button>
                 <button class="cd_tab_btn" t-att-class="{ 'cd_active': state.activeTab === 'sales' }"
                         t-on-click="() => this.switchTab('sales')">
