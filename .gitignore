@@ -1,0 +1,43 @@
+# ==========================================
+# Odoo Core & Environment
+# ==========================================
+odoo/
+venv/
+.venv/
+
+# ==========================================
+# Odoo Local Configuration & Secrets
+# ==========================================
+*.conf
+odoo.conf
+odoo.conf
+
+*.cfg
+*.env
+.env*
+!example.env
+!.env.example
+
+# ==========================================
+# Python Bytecode & Cache
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# ==========================================
+# Logs & Runtime
+# ==========================================
+*.log
+filestore/
+sessions/
+
+# ==========================================
+# IDE & Operating System
+# ==========================================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
